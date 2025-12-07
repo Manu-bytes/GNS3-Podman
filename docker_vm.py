@@ -845,8 +845,92 @@ class DockerVM(BaseNode):
         """
         Starts streaming the console via telnet
         """
-
+        
+        if os.environ.get('GNS3_USE_PODMAN', '0') == '1':
+            log.warning("DEBUG: Podman - iniciando consola con pseudo-terminal")
+            
+            try:
+                
+                # Comando que crea un pseudo-terminal completo
+                process = await asyncio.create_subprocess_exec(
+                    'script', '-qfc',
+                    f'podman exec -it {self._cid} /bin/sh',
+                    '/dev/null',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    stdin=asyncio.subprocess.PIPE
+                )
+                
+                # Clase simple para manejar UNA conexión a la vez
+                class PodmanConsole:
+                    def __init__(self, process):
+                        self.process = process
+                        self.active_connection = None
+                    
+                    async def run(self, reader, writer):
+                        # Solo permitir una conexión a la vez
+                        if self.active_connection:
+                            writer.write(b"Console already in use. Please try again later.\r\n")
+                            await writer.drain()
+                            writer.close()
+                            return
+                        
+                        self.active_connection = (reader, writer)
+                        try:
+                            # Leer del proceso y escribir al cliente
+                            async def forward_output():
+                                while True:
+                                    try:
+                                        data = await self.process.stdout.read(1024)
+                                        if not data:
+                                            break
+                                        writer.write(data)
+                                        await writer.drain()
+                                    except (ConnectionResetError, BrokenPipeError):
+                                        break
+                            
+                            # Leer del cliente y escribir al proceso
+                            async def forward_input():
+                                while True:
+                                    try:
+                                        data = await reader.read(1024)
+                                        if not data:
+                                            break
+                                        self.process.stdin.write(data)
+                                        await self.process.stdin.drain()
+                                    except (ConnectionResetError, BrokenPipeError):
+                                        break
+                            
+                            # Ejecutar ambas tareas
+                            await asyncio.gather(
+                                forward_output(),
+                                forward_input(),
+                                return_exceptions=True
+                            )
+                            
+                        finally:
+                            self.active_connection = None
+                
+                # Crear instancia del manejador
+                console_handler = PodmanConsole(process)
+                
+                # Iniciar servidor
+                server = await asyncio.start_server(
+                    console_handler.run,
+                    self._manager.port_manager.console_host,
+                    self.console
+                )
+                self._telnet_servers.append(server)
+                
+                log.warning(f"DEBUG: Consola Podman iniciada en puerto {self.console}")
+                return
+                
+            except Exception as e:
+                log.warning(f"DEBUG: Error iniciando consola Podman: {e}")
+         
+        # MÉTODO ORIGINAL PARA DOCKER
         class InputStream:
+
             def __init__(self):
                 self._data = b""
 
@@ -860,25 +944,13 @@ class DockerVM(BaseNode):
 
         output_stream = asyncio.StreamReader()
         input_stream = InputStream()
-        telnet = AsyncioTelnetServer(
-            reader=output_stream,
-            writer=input_stream,
-            echo=True,
-            naws=True,
-            window_size_changed_callback=self._window_size_changed_callback,
-        )
+        telnet = AsyncioTelnetServer(reader=output_stream, writer=input_stream, echo=True, naws=True, window_size_changed_callback=self._window_size_changed_callback)
         try:
-            self._telnet_servers.append(
-                await asyncio.start_server(telnet.run, self._manager.port_manager.console_host, self.console)
-            )
+            self._telnet_servers.append((await asyncio.start_server(telnet.run, self._manager.port_manager.console_host, self.console)))
         except OSError as e:
-            raise DockerError(
-                f"Could not start Telnet server on socket {self._manager.port_manager.console_host}:{self.console}: {e}"
-            )
+            raise DockerError("Could not start Telnet server on socket {}:{}: {}".format(self._manager.port_manager.console_host, self.console, e))
 
-        self._console_websocket = await self.manager.websocket_query(
-            f"containers/{self._cid}/attach/ws?stream=1&stdin=1&stdout=1&stderr=1"
-        )
+        self._console_websocket = await self.manager.websocket_query("containers/{}/attach/ws?stream=1&stdin=1&stdout=1&stderr=1".format(self._cid))
         input_stream.ws = self._console_websocket
         output_stream.feed_data(self.name.encode() + b" console is now available... Press RETURN to get started.\r\n")
         asyncio.ensure_future(self._read_console_output(self._console_websocket, output_stream))
@@ -1066,38 +1138,24 @@ class DockerVM(BaseNode):
     async def _add_ubridge_connection(self, nio, adapter_number):
         """
         Creates a connection in uBridge.
-
-        :param nio: NIO instance or None if it's a dummy interface (if an interface is missing in ubridge you can't see it via ifconfig in the container)
-        :param adapter_number: adapter number
         """
-
         try:
             adapter = self._ethernet_adapters[adapter_number]
         except IndexError:
-            raise DockerError(
-                "Adapter {adapter_number} doesn't exist on Docker container '{name}'".format(
-                    name=self.name, adapter_number=adapter_number
-                )
-            )
+            raise DockerError(f"Adapter {adapter_number} doesn't exist on Docker container '{self.name}'")
 
         for index in range(4096):
             if f"tap-gns3-e{index}" not in psutil.net_if_addrs():
-                adapter.host_ifc = f"tap-gns3-e{str(index)}"
+                adapter.host_ifc = f"tap-gns3-e{index}"
                 break
+        
         if adapter.host_ifc is None:
-            raise DockerError(
-                "Adapter {adapter_number} couldn't allocate interface on Docker container '{name}'. Too many Docker interfaces already exists".format(
-                    name=self.name, adapter_number=adapter_number
-                )
-            )
-        bridge_name = f"bridge{adapter_number}"
-        await self._ubridge_send(f"bridge create {bridge_name}")
+            raise DockerError(f"Adapter {adapter_number} couldn't allocate interface on Docker container '{self.name}'. Too many Docker interfaces already exists")
+
+        bridge_name = f'bridge{adapter_number}'
+        await self._ubridge_send(f'bridge create {bridge_name}')
         self._bridges.add(bridge_name)
-        await self._ubridge_send(
-            "bridge add_nio_tap bridge{adapter_number} {hostif}".format(
-                adapter_number=adapter_number, hostif=adapter.host_ifc
-            )
-        )
+        await self._ubridge_send(f'bridge add_nio_tap {bridge_name} {adapter.host_ifc}')
 
         mac_address = int_to_macaddress(macaddress_to_int(self._mac_address) + adapter_number)
         custom_adapter = self._get_custom_adapter_settings(adapter_number)
@@ -1106,22 +1164,61 @@ class DockerVM(BaseNode):
             mac_address = custom_mac_address
 
         try:
-            await self._ubridge_send('docker set_mac_addr {ifc} {mac}'.format(ifc=adapter.host_ifc, mac=mac_address))
+            await self._ubridge_send(f'docker set_mac_addr {adapter.host_ifc} {mac_address}')
         except UbridgeError:
             log.warning(f"Could not set MAC address {mac_address} on interface {adapter.host_ifc}")
 
-
         log.debug(f"Move container {self.name} adapter {adapter.host_ifc} to namespace {self._namespace}")
-        try:
-            await self._ubridge_send(
-                "docker move_to_ns {ifc} {ns} eth{adapter}".format(
-                    ifc=adapter.host_ifc, ns=self._namespace, adapter=adapter_number
+        
+        # DETECTAR PODMAN ROOTLESS
+        import os
+        if os.environ.get('GNS3_USE_PODMAN', '0') == '1':
+            log.warning("DEBUG: Podman rootless detectado - usando método alternativo")
+            
+            # Para Podman rootless, no podemos usar docker move_to_ns
+            # En su lugar, crear interfaz dentro del contenedor y bridge en el host
+            try:
+                import subprocess
+                
+                # 1. Crear interfaz dummy dentro del contenedor
+                log.warning(f"DEBUG: Creando interfaz eth{adapter_number} dentro del contenedor Podman")
+                
+                # Verificar si ya existe
+                result = subprocess.run(
+                    ['podman', 'exec', self._cid, 'ip', 'link', 'show', f'eth{adapter_number}'],
+                    capture_output=True, text=True
                 )
-            )
-        except UbridgeError as e:
-            raise UbridgeNamespaceError(e)
+                
+                if result.returncode != 0:  # No existe
+                    cmds = [
+                        ['podman', 'exec', self._cid, 'ip', 'link', 'add', 'dummy0', 'type', 'dummy'],
+                        ['podman', 'exec', self._cid, 'ip', 'link', 'set', 'dummy0', 'address', mac_address],
+                        ['podman', 'exec', self._cid, 'ip', 'link', 'set', 'dummy0', 'name', f'eth{adapter_number}'],
+                        ['podman', 'exec', self._cid, 'ip', 'link', 'set', f'eth{adapter_number}', 'up']
+                    ]
+                    
+                    for cmd in cmds:
+                        subprocess.run(cmd, capture_output=True, text=True)
+                
+                log.warning(f"DEBUG: Interfaz eth{adapter_number} configurada en contenedor Podman")
+                
+                # 2. NO intentar docker move_to_ns (fallará)
+                # 3. En su lugar, configurar un bridge simple
+                
+            except Exception as e:
+                log.warning(f"DEBUG: Error configurando Podman: {e}")
+            
+            # Saltar docker move_to_ns para Podman
+            log.warning(f"DEBUG: Saltando docker move_to_ns para Podman rootless")
+            
         else:
-            log.info(f"Created adapter {adapter_number} with MAC address {mac_address} in namespace {self._namespace}")
+            # Método normal para Docker
+            try:
+                await self._ubridge_send(f'docker move_to_ns {adapter.host_ifc} {self._namespace} eth{adapter_number}')
+            except UbridgeError as e:
+                raise UbridgeNamespaceError(e)
+
+        log.info(f"Created adapter {adapter_number} with MAC address {mac_address}")
 
         if nio:
             await self._connect_nio(adapter_number, nio)
@@ -1129,7 +1226,10 @@ class DockerVM(BaseNode):
     async def _get_namespace(self):
 
         result = await self.manager.query("GET", f"containers/{self._cid}/json")
-        return int(result["State"]["Pid"])
+        pid = int(result["State"]["Pid"])
+        # DEBUG pid
+        log.warning("DEBUG: Value pid %s", pid)
+        return pid
 
     async def _connect_nio(self, adapter_number, nio):
 
