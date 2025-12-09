@@ -1075,38 +1075,34 @@ class DockerVM(BaseNode):
     async def _add_ubridge_connection(self, nio, adapter_number):
         """
         Creates a connection in uBridge.
-        """
 
+        :param nio: NIO instance or None if it's a dummy interface (if an interface is missing in ubridge you can't see it via ifconfig in the container)
+        :param adapter_number: adapter number
+        """
         try:
             adapter = self._ethernet_adapters[adapter_number]
         except IndexError:
             raise DockerError(f"Adapter {adapter_number} doesn't exist on Docker container '{self.name}'")
+        
         for index in range(4096):
             if f"tap-gns3-e{index}" not in psutil.net_if_addrs():
                 adapter.host_ifc = f"tap-gns3-e{index}"
                 break
+        
         if adapter.host_ifc is None:
             raise DockerError(f"Adapter {adapter_number} couldn't allocate interface on Docker container '{self.name}'. Too many Docker interfaces already exists")
-
+        
         bridge_name = f'bridge{adapter_number}'
         await self._ubridge_send(f'bridge create {bridge_name}')
         self._bridges.add(bridge_name)
-
-        # Create mac address and custom settings
         mac_address = int_to_macaddress(macaddress_to_int(self._mac_address) + adapter_number)
         custom_adapter = self._get_custom_adapter_settings(adapter_number)
         custom_mac_address = custom_adapter.get("mac_address")
-
+        
         if custom_mac_address:
             mac_address = custom_mac_address
-        try:
-            await self._ubridge_send(f'docker set_mac_addr {adapter.host_ifc} {mac_address}')
-            # await self._ubridge_send('docker set_mac_addr {ifc} {mac}'.format(ifc=adapter.host_ifc, mac=mac_address))
-        except UbridgeError:
-            log.warning(f"Could not set MAC address {mac_address} on interface {adapter.host_ifc}")
-        log.debug(f"Move container {self.name} adapter {adapter.host_ifc} to namespace {self._namespace}")
-
-        # Start modified block podman rootless
+        
+        # Podman rootless block
         if os.environ.get('GNS3_USE_PODMAN', '0') == '1':
             log.info("Podman rootless detected — using STDIO PROXY flow")
 
@@ -1119,59 +1115,31 @@ class DockerVM(BaseNode):
 
             if not os.path.exists(proxy_path):
                 raise FileNotFoundError(f"Host proxy not found at {proxy_path}")
-
-            #1. Copy agent to container (same as you had, that's correct)
+            
+            # 1. Copy agent to container
             try:
                 if os.path.exists(agent_host_path):
-                    # mkdir
                     subprocess.run(['podman', 'exec', self._cid, 'mkdir', '-p', os.path.dirname(agent_container_path)],
                                    check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    # cp
                     subprocess.run(['podman', 'cp', agent_host_path, f'{self._cid}:{agent_container_path}'],
                                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    # chmod
                     subprocess.run(['podman', 'exec', self._cid, 'chmod', '+x', agent_container_path],
                                    check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception as e:
                 log.warning(f"Error copying agent to podman container: {e}")
-
-            #2. Configure TAP on the Host (uBridge requires the interface to exist)
+            
+            #2. Add TAP to the bridge (but do NOT start it yet)
             try:
-                # Pre-cleaning
-                try:
-                    subprocess.run(['ip', 'link', 'delete', host_if], check=False, stderr=subprocess.DEVNULL)
-                except: pass
-
-                # Create a temporary bridge in uBridge to “support” the TAP
-                tmp_bridge = f'bridge_tmp_{self._cid[:8]}_{adapter_number}'
-                await self._ubridge_send(f'bridge create {tmp_bridge}')
+                await self._ubridge_send(f'bridge add_nio_tap {bridge_name} {host_if}')
                 
-                # Create the TAP using uBridge
-                # IMPORTANT: When using an external proxy, uBridge creates the TAP but we take control of the data flow.
-                # If this fails, you may need to create the TAP manually with ‘ip tuntap add ...’
-                # but GNS3 usually prefers to control them. Let's try adding it to the bridge.
-                
-                # NOTE: In your original code, you were trying to add it, but since we can't move it, 
-                # the strategy is: Let uBridge create the TAP on the host, and our proxy script 
-                # opens that same TAP (/dev/net/tun) for reading/writing.
-                
-                await self._ubridge_send(f'bridge add_nio_tap {tmp_bridge} {host_if}')
-                
-                 # Upload host interface
-                subprocess.run(['ip', 'link', 'set', host_if, 'up'], check=False)
-                
-                # Optional Bridge Management (your question about Isolated vs. Bridge)
-                bridge_env = os.environ.get('GNS3_PODMAN_BRIDGE', '')
-                if bridge_env:
-                     # If the user defined a real system bridge (e.g., virbr0), we connect the TAP there.
-                     # This allows you to exit to the physical network if desired.
-                    subprocess.run(['ip', 'link', 'set', host_if, 'master', bridge_env], check=False)
-
+                # Attempt to manually raise the interface with privileges
+                import time
+                time.sleep(0.1)
+                subprocess.run(['pkexec', 'ip', 'link', 'set', host_if, 'up'], check=False)
             except Exception as e:
-                log.warning(f"Error preparing Host TAP via ubridge: {e}")
-
-            # 3. Start the Proxy (Host)
-            # We pass --cid instead of --socket
+                log.warning(f"Error preparing Host TAP: {e}")
+            
+            # 3. Start the Proxy
             proxy_cmd = [
                 'python3', proxy_path, 
                 '--tap', host_if, 
@@ -1180,27 +1148,26 @@ class DockerVM(BaseNode):
                 '--ifname', f'eth{adapter_number}',
                 '--mac', mac_address
             ]
-            
-            # We launch detached (GNS3 does not wait for this)
-            proxy_proc = subprocess.Popen(proxy_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            
+            proxy_proc = subprocess.Popen(proxy_cmd, 
+                                         stdout=subprocess.PIPE, 
+                                         stderr=subprocess.PIPE)
             adapter._proxy_pid = proxy_proc.pid
-            adapter._tmp_bridge = tmp_bridge # Guardamos para limpieza futura
-            
             log.info(f"Podman Rootless: Proxy launched (PID {proxy_proc.pid}) linking {host_if} -> Container")
-
         else:
-             # Normal docker behavior
+            # Normal docker behavior
             try:
                 await self._ubridge_send(f'bridge add_nio_tap {bridge_name} {adapter.host_ifc}')
                 await self._ubridge_send(f'docker move_to_ns {adapter.host_ifc} {self._namespace} eth{adapter_number}')
             except UbridgeError as e:
                 raise UbridgeNamespaceError(e)
-
         log.info(f"Created adapter {adapter_number} with MAC address {mac_address}")
-
+        
+        #4. If there is a NIO, connect it.
         if nio:
             await self._connect_nio(adapter_number, nio)
+            #5. ONLY AFTER connecting the NIO, start the bridge.
+            if os.environ.get('GNS3_USE_PODMAN', '0') == '1':
+                await self._ubridge_send(f'bridge start {bridge_name}')
 
     async def _get_namespace(self):
 
