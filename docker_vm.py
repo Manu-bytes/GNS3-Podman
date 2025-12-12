@@ -27,6 +27,7 @@ import aiohttp
 import subprocess
 import os
 import re
+import signal
 
 from gns3server.utils.asyncio.telnet_server import AsyncioTelnetServer
 from gns3server.utils.asyncio.raw_command_server import AsyncioRawCommandServer
@@ -966,9 +967,10 @@ class DockerVM(BaseNode):
             if self._console_websocket:
                 await self._console_websocket.close()
                 self._console_websocket = None
+            for adapter in self._ethernet_adapters:
+                self._cleanup_rootless_resources(adapter)
             await self._clean_servers()
             await self._stop_ubridge()
-
             try:
                 state = await self._get_container_state()
             except DockerHttp404Error:
@@ -993,7 +995,23 @@ class DockerVM(BaseNode):
         # Ignore runtime error because when closing the server
         except RuntimeError as e:
             log.debug(f"Docker runtime error when closing: {str(e)}")
-            return
+        
+        if self.working_dir and os.path.exists(self.working_dir):
+            try:
+                uid = os.getuid()
+                gid = os.getgid()
+                log.info(f"UID: {uid} GID: {gid}")
+                # Usamos pkexec para devolver la propiedad de los archivos al usuario actual
+                # antes de que GNS3 intente borrarlos.
+                subprocess.run(
+                    ['pkexec', 'chown', '-R', f'{uid}:{gid}', self.working_dir],
+                    check=False,
+                    stdout=subprocess.DEVNULL, 
+                    stderr=subprocess.DEVNULL
+                )
+                log.info(f"Fixed host permissions for {self.working_dir}")
+            except Exception as e:
+                log.warning(f"Could not fix permissions on working dir: {e}")
         self.status = "stopped"
 
     async def pause(self):
@@ -1030,7 +1048,8 @@ class DockerVM(BaseNode):
             state = await self._get_container_state()
             if state == "paused" or state == "running":
                 await self.stop()
-
+            for adapter in self._ethernet_adapters:
+                self._cleanup_rootless_resources(adapter)
             if self.console_type == "vnc":
                 if self._vncconfig_process:
                     try:
@@ -1106,53 +1125,99 @@ class DockerVM(BaseNode):
         if os.environ.get('GNS3_USE_PODMAN', '0') == '1':
             log.info("Podman rootless detected — using STDIO PROXY flow")
 
-            host_if = adapter.host_ifc
-            
+            tap_gns3 = adapter.host_ifc
+            tap_proxy = f"tap-prox-e{index}"
+            shim_bridge = f"br-shim-e{index}"
+            current_uid = str(os.getuid())
+
             # Script paths
             agent_host_path = os.environ.get('GNS3_NET_AGENT_HOST_PATH', '/usr/local/share/gns3/gns3-net-agent.py')
-            agent_container_path = '/opt/gns3/gns3-net-agent.py'
+            agent_container_path = '/opt/gns3/gns3-net-agent'
             proxy_path = os.environ.get('GNS3_NET_PROXY_HOST_PATH', '/usr/local/bin/gns3-net-proxy.py')
-
+            
             if not os.path.exists(proxy_path):
                 raise FileNotFoundError(f"Host proxy not found at {proxy_path}")
             
             # 1. Copy agent to container
             try:
-                if os.path.exists(agent_host_path):
-                    subprocess.run(['podman', 'exec', self._cid, 'mkdir', '-p', os.path.dirname(agent_container_path)],
-                                   check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    subprocess.run(['podman', 'cp', agent_host_path, f'{self._cid}:{agent_container_path}'],
-                                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    subprocess.run(['podman', 'exec', self._cid, 'chmod', '+x', agent_container_path],
-                                   check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(['podman', 'exec', self._cid, 'mkdir', '-p', os.path.dirname(agent_container_path)],
+                                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(['podman', 'cp', agent_host_path, f'{self._cid}:{agent_container_path}'],
+                                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(['podman', 'exec', self._cid, 'chmod', '+x', agent_container_path],
+                                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception as e:
                 log.warning(f"Error copying agent to podman container: {e}")
             
-            #2. Add TAP to the bridge (but do NOT start it yet)
+            # 2. Configurar uBridge (Lado GNS3)
             try:
-                await self._ubridge_send(f'bridge add_nio_tap {bridge_name} {host_if}')
-                
-                # Attempt to manually raise the interface with privileges
-                import time
-                time.sleep(0.1)
-                subprocess.run(['pkexec', 'ip', 'link', 'set', host_if, 'up'], check=False)
+                await self._ubridge_send(f'bridge add_nio_tap {bridge_name} {tap_gns3}')
             except Exception as e:
-                log.warning(f"Error preparing Host TAP: {e}")
-            
-            # 3. Start the Proxy
+                log.warning(f"Error adding tap to ubridge: {e}")
+
+            # ==============================================================================
+            # PASO CRITICO: PRE-CREAR LA TAP DEL PROXY CON PERMISOS DE USUARIO
+            # ==============================================================================
+            try:
+                # 1. Borramos por si quedó sucia de una sesión anterior
+                subprocess.run(['sudo', 'ip', 'link', 'delete', tap_proxy], 
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                
+                # 2. Creamos la TAP y se la damos a TU usuario (user current_uid)
+                # Esto permite que el script Python (sin sudo) la abra después.
+                subprocess.run(['sudo', 'ip', 'tuntap', 'add', 'dev', tap_proxy, 'mode', 'tap', 'user', current_uid], 
+                               check=True)
+                
+                # 3. La levantamos
+                subprocess.run(['sudo', 'ip', 'link', 'set', tap_proxy, 'up'], 
+                               check=True)
+                
+            except Exception as e:
+                 raise DockerError(f"Failed to pre-create TAP interface {tap_proxy}: {e}")
+
+            # ==============================================================================
+            # 3. Start the Proxy (Ahora funcionará porque la TAP ya existe y es tuya)
+            # ==============================================================================
             proxy_cmd = [
                 'python3', proxy_path, 
-                '--tap', host_if, 
+                '--tap', tap_proxy, 
                 '--cid', self._cid,
                 '--agent-path', agent_container_path,
-                '--ifname', f'eth{adapter_number}',
+                '--ifname', f'eth01', # Ojo: Asegúrate de usar eth1, eth2 si eth0 está ocupada
                 '--mac', mac_address
             ]
+            
             proxy_proc = subprocess.Popen(proxy_cmd, 
-                                         stdout=subprocess.PIPE, 
-                                         stderr=subprocess.PIPE)
+                                        stdout=subprocess.PIPE, 
+                                        stderr=subprocess.PIPE)
             adapter._proxy_pid = proxy_proc.pid
-            log.info(f"Podman Rootless: Proxy launched (PID {proxy_proc.pid}) linking {host_if} -> Container")
+            log.info(f"Podman Rootless: Proxy launched (PID {proxy_proc.pid}) attaching to {tap_proxy}")
+            
+            # 4. "The Plumbing": Create the bridge on the Host
+            try:
+                import time
+                time.sleep(0.5) 
+                
+                cmds = [
+                    # Create the bridge
+                    ['ip', 'link', 'add', 'name', shim_bridge, 'type', 'bridge'],
+                    ['ip', 'link', 'set', shim_bridge, 'up'],
+                    # Connect GNS3 TAP to the bridge
+                    ['ip', 'link', 'set', tap_gns3, 'master', shim_bridge],
+                    ['ip', 'link', 'set', tap_gns3, 'up'],
+                    # Connect Proxy TAP to bridge
+                    ['ip', 'link', 'set', tap_proxy, 'master', shim_bridge],
+                    # (tap_proxy ya está UP, pero no hace daño repetirlo)
+                    ['ip', 'link', 'set', tap_proxy, 'up']
+                ]
+                
+                for cmd in cmds:
+                    subprocess.run(['sudo'] + cmd, check=False)
+                
+                log.info(f"Podman Rootless: Shim bridge {shim_bridge} linking {tap_gns3} <-> {tap_proxy}")
+            
+            except Exception as e:
+                log.error(f"Error building shim bridge: {e}")
         else:
             # Normal docker behavior
             try:
@@ -1168,6 +1233,51 @@ class DockerVM(BaseNode):
             #5. ONLY AFTER connecting the NIO, start the bridge.
             if os.environ.get('GNS3_USE_PODMAN', '0') == '1':
                 await self._ubridge_send(f'bridge start {bridge_name}')
+
+    def _cleanup_rootless_resources(self, adapter):
+        """
+        Helper to clean up Podman Rootless resources (Proxy process, Shim Bridge, Proxy TAP).
+        """
+        # Solo actuar si es Podman Rootless y el adaptador tiene una interfaz asignada
+        if os.environ.get('GNS3_USE_PODMAN') != '1' or not adapter.host_ifc:
+            return
+
+        # 1. Matar el proceso del Proxy Python
+        if hasattr(adapter, '_proxy_pid') and adapter._proxy_pid:
+            log.info(f"Stopping Podman proxy process PID {adapter._proxy_pid}")
+            try:
+                os.kill(adapter._proxy_pid, signal.SIGTERM)
+                # Opcional: esperar un poco o hacer waitpid, pero GNS3 suele ser no bloqueante aquí
+            except ProcessLookupError:
+                pass # Ya estaba muerto
+            except Exception as e:
+                log.warning(f"Error killing proxy process: {e}")
+            adapter._proxy_pid = None
+
+        # 2. Identificar el índice de la interfaz
+        # adapter.host_ifc es algo como "tap-gns3-e5". Necesitamos el "5".
+        # No usamos adapter_number porque el índice de la TAP es dinámico (range 4096).
+        match = re.search(r'tap-gns3-e(\d+)', adapter.host_ifc)
+        if match:
+            index = match.group(1)
+            shim_bridge = f"br-shim-e{index}"
+            tap_proxy = f"tap-prox-e{index}"
+
+            log.info(f"Cleaning up Rootless network plumbing: {shim_bridge}, {tap_proxy}")
+            
+            # 3. Eliminar Bridge y TAP del Host
+            # El orden importa: Borrar el bridge suele liberar las interfaces, 
+            # pero como tap-prox es persistente, hay que borrarla explícitamente.
+            try:
+                # Borramos el bridge
+                subprocess.run(['sudo', 'ip', 'link', 'delete', shim_bridge], 
+                               check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                # Borramos la TAP del proxy
+                subprocess.run(['sudo', 'ip', 'link', 'delete', tap_proxy], 
+                               check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as e:
+                log.error(f"Error cleaning up host network interfaces: {e}")
 
     async def _get_namespace(self):
 
@@ -1254,6 +1364,8 @@ class DockerVM(BaseNode):
             )
 
         await self.stop_capture(adapter_number)
+        self._cleanup_rootless_resources(adapter)
+
         if self.ubridge:
             nio = adapter.get_nio(0)
             bridge_name = f"bridge{adapter_number}"
@@ -1265,10 +1377,11 @@ class DockerVM(BaseNode):
             )
 
         adapter.remove_nio(0)
+        adapter.host_ifc = None
 
         log.info(
-            "Docker VM '{name}' [{id}]: {nio} removed from adapter {adapter_number}".format(
-                name=self.name, id=self.id, nio=adapter.host_ifc, adapter_number=adapter_number
+            "Docker VM '{name}' [{id}]: NIO removed from adapter {adapter_number}".format(
+                name=self.name, id=self.id, adapter_number=adapter_number
             )
         )
 
