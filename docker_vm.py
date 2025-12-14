@@ -1152,22 +1152,24 @@ class DockerVM(BaseNode):
                 raise FileNotFoundError(f"Host proxy not found at {proxy_path}")
             # 1. Copy agent to container
             try:
-                subprocess.run(['podman', 'exec', self._cid, 'mkdir', '-p', os.path.dirname(agent_container_path)],
-                                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                subprocess.run(['podman', 'cp', agent_host_path, f'{self._cid}:{agent_container_path}'],
-                                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                subprocess.run(['podman', 'exec', self._cid, 'chmod', '+x', agent_container_path],
-                                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                time.sleep(0.05)
+                cmds = [
+                    ['podman', 'exec', self._cid, 'mkdir', '-p', os.path.dirname(agent_container_path)],
+                    ['podman', 'cp', agent_host_path, f'{self._cid}:{agent_container_path}'],
+                    ['podman', 'exec', self._cid, 'chmod', '+x', agent_container_path]
+                ]
+                for cmd in cmds:
+                    subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception as e:
                 log.warning(f"Error copying agent to podman container: {e}")
-            # 2. Configurar uBridge (Lado GNS3)
+            # 2. Configure uBridge (GNS3 Side)
             try:
                 await self._ubridge_send(f'bridge add_nio_tap {bridge_name} {tap_gns3}')
             except Exception as e:
                 log.warning(f"Error adding tap to ubridge: {e}")
             # Pre-create the proxy tap with user permissions
             try:
-                time.sleep(0.3)
+                time.sleep(0.05)
                 cmds = [
                     # 1. We wipe it down in case it got dirty from a previous session.
                     ['ip', 'link', 'delete', tap_proxy],
@@ -1178,7 +1180,7 @@ class DockerVM(BaseNode):
                     ['ip', 'link', 'set', tap_proxy, 'up']
                 ]
                 for cmd in cmds:
-                    subprocess.run(['sudo'] + cmd, check=False)
+                    subprocess.run(['sudo'] + cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception as e:
                 raise DockerError(f"Failed to pre-create TAP interface {tap_proxy}: {e}")
 
@@ -1196,7 +1198,7 @@ class DockerVM(BaseNode):
             log.info(f"Podman Rootless: Proxy launched (PID {proxy_proc.pid}) attaching to {tap_proxy}")
             # 4. "The Plumbing": Create the bridge on the Host
             try:
-                time.sleep(0.5)
+                time.sleep(0.1)
                 cmds = [
                     # Create the bridge
                     ['ip', 'link', 'add', 'name', shim_bridge, 'type', 'bridge'],
@@ -1210,7 +1212,7 @@ class DockerVM(BaseNode):
                     ['ip', 'link', 'set', tap_proxy, 'up']
                 ]
                 for cmd in cmds:
-                    subprocess.run(['sudo'] + cmd, check=False)
+                    subprocess.run(['sudo'] + cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 log.info(f"Podman Rootless: Shim bridge {shim_bridge} linking {tap_gns3} <-> {tap_proxy}")
             except Exception as e:
                 log.error(f"Error building shim bridge: {e}")
