@@ -1251,7 +1251,7 @@ class DockerVM(BaseNode):
             # Script paths
             path_docker_vm = os.path.dirname(os.path.abspath(__file__))
             path_agent_host = os.path.join(path_docker_vm, "gns3-net-agent")
-            path_proxy_host = os.path.join(path_docker_vm, "gns3-net-proxy.py")
+            path_proxy_host = os.path.join(path_docker_vm, "gns3-net-proxy")
             agent_host_path = os.environ.get('GNS3_NET_AGENT_HOST_PATH', path_agent_host )
             proxy_path = os.environ.get('GNS3_NET_PROXY_HOST_PATH', path_proxy_host)
             agent_container_path = '/opt/gns3/gns3-net-agent'
@@ -1295,7 +1295,7 @@ class DockerVM(BaseNode):
             # 3. Start the Proxy
             interface_name = f'geth{adapter_number}'
             proxy_cmd = [
-                'python3', proxy_path,
+                proxy_path,
                 '--tap', tap_proxy,
                 '--cid', self._cid,
                 '--agent-path', agent_container_path,

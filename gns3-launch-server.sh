@@ -9,7 +9,9 @@ PID_GNS3=0
 
 # Cleanup function
 cleanup_wrapper() {
-  echo -e "\n🛑 Shutting down GNS3 environment..."
+  echo "#------------------------------------------------------------------#"
+  echo -e "#--               🛑Shutting down GNS3 environment               --#"
+  echo "#------------------------------------------------------------------#"
   # Suppress output to keep shutdown clean, unless there's an error
   sudo "$BRIDGE_SCRIPT" stop >/dev/null
   exit
@@ -17,7 +19,9 @@ cleanup_wrapper() {
 
 handle_sigint() {
   if [[ $PID_GNS3 -ne 0 ]]; then
-    echo -e "\n⚡️ SIGINT signal → sending to the GNS3 process (PID=$PID_GNS3)…"
+    echo -e "\n#------------------------------------------------------------------#"
+    echo -e "#-- ⚡️ SIGINT signal -> sending to the GNS3 process (PID=$PID_GNS3) --#"
+    echo "#------------------------------------------------------------------#"
     kill -SIGINT "$PID_GNS3" 2>/dev/null || true
     wait "$PID_GNS3" 2>/dev/null
   fi
@@ -38,7 +42,9 @@ while true; do
   kill -0 "$$" || exit
 done 2>/dev/null &
 
-echo "🚀 Setting up GNS3 network environment..."
+echo "#------------------------------------------------------------------#"
+echo "#--             🚀 Setting up GNS3 network environment           --#"
+echo "#------------------------------------------------------------------#"
 
 # 1. Check & Start Podman Socket (Rootless)
 systemctl --user is-active --quiet podman.socket
@@ -58,7 +64,7 @@ if ! sudo "$BRIDGE_SCRIPT" start; then
 fi
 
 echo "✅ Network ready. Launching GNS3..."
-echo "-----------------------------------------------------"
+echo "#------------------------------------------------------------------#"
 # Small pause to ensure stdout flushes before GNS3 logs start
 sleep 1
 
