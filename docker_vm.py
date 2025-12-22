@@ -658,24 +658,47 @@ class DockerVM(BaseNode):
 
     async def _start_aux(self):
         """
-        Start an auxiliary console
+        Start an auxiliary console using 'script' for PTY handling and a loop for persistence.
         """
 
-        # We can not use the API because docker doesn't expose a websocket api for exec
-        # https://github.com/GNS3/gns3-gui/issues/1039
+        #1. Detect Runtime
+        runtime = "podman" if os.environ.get("GNS3_USE_PODMAN") == "1" else "docker"
+
+        # 2. Internal Command (Infinite Loop)
+        # This loop ensures that if the user types ‘exit’, a new shell is launched immediately instead of closing the connection.
+        # We add ‘sleep 1’ to prevent crazy CPU consumption if the shell fails to loop.
+        loop_cmd = "while true; do TERM=vt100 /gns3/bin/busybox sh; sleep 1; done"
+
+        # 3. Main Command (Wrapped in ‘script’)
+        # -q: Quiet (less visual noise)
+        # -f: Flush (immediate writing)
+        # -c: The complete command to execute
+        # Note: We wrap loop_cmd in single quotes so that it is a single argument for sh -c
+        cmd = [
+            "script", "-q", "-f", "-c",
+            f"{runtime} exec -it {self._cid} /gns3/bin/busybox sh -c '{loop_cmd}'",
+            "/dev/null"
+        ]
+
         try:
-            process = await asyncio.subprocess.create_subprocess_exec(
-                "script",
-                "-qfc",
-                f"docker exec -i -t {self._cid} /gns3/bin/busybox sh -c 'while true; do TERM=vt100 /gns3/bin/busybox sh; done'",
-                "/dev/null",
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 stdin=asyncio.subprocess.PIPE,
             )
         except OSError as e:
             raise DockerError(f"Could not start auxiliary console process: {e}")
-        server = AsyncioTelnetServer(reader=process.stdout, writer=process.stdin, binary=True, echo=True)
+
+        # 4. Telnet Server
+        # echo=True is CRUCIAL here because ‘script’ handles the actual PTY.
+        # The Telnet server will tell your client (Putty/Solar) “I do the echoing, you don't.”
+        server = AsyncioTelnetServer(
+            reader=process.stdout, 
+            writer=process.stdin, 
+            binary=True, 
+            echo=True 
+        )
         try:
             self._telnet_servers.append(
                 await asyncio.start_server(server.run, self._manager.port_manager.console_host, self.aux)
