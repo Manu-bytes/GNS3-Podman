@@ -20,7 +20,7 @@ cleanup_wrapper() {
 handle_sigint() {
   if [[ $PID_GNS3 -ne 0 ]]; then
     echo -e "\n#------------------------------------------------------------------#"
-    echo -e "#-- ⚡️ SIGINT signal -> sending to the GNS3 process (PID=$PID_GNS3) --#"
+    echo -e "#-- ⚡️ SIGINT signal -> sending to the GNS3 process  (PID=$PID_GNS3) --#"
     echo "#------------------------------------------------------------------#"
     kill -SIGINT "$PID_GNS3" 2>/dev/null || true
     wait "$PID_GNS3" 2>/dev/null
@@ -47,8 +47,7 @@ echo "#--             🚀 Setting up GNS3 network environment           --#"
 echo "#------------------------------------------------------------------#"
 
 # 1. Check & Start Podman Socket (Rootless)
-systemctl --user is-active --quiet podman.socket
-if [ $? -ne 0 ]; then
+if ! systemctl --user is-active --quiet podman.socket; then
   echo "   -> Starting podman.socket..."
   if ! systemctl --user start podman.socket; then
     echo "❌ Failed to start podman.socket. Is podman installed?"
