@@ -1152,6 +1152,7 @@ class DockerVM(BaseNode):
         address = None
         netmask = None
         gateway = None
+        up_commands = []
 
         try:
             with open(config_file, 'r') as f:
@@ -1176,6 +1177,9 @@ class DockerVM(BaseNode):
                         netmask = line.split()[1]
                     elif line.startswith("gateway"):
                         gateway = line.split()[1]
+                if line.startswith("up "):
+                    cmd = line[3:].strip()
+                    up_commands.append(cmd)
 
             # ========================================== #
             # --------Apply static configuration-------- #
@@ -1186,16 +1190,14 @@ class DockerVM(BaseNode):
                     cidr = sum([bin(int(x)).count('1') for x in netmask.split('.')])
                 except ValueError:
                     cidr = 24 # Fallback
-
-                cmds = [
-                    ['podman', 'exec', self._cid, 'ip', 'addr', 'add', f"{address}/{cidr}", 'dev', interface],
-                    ['podman', 'exec', self._cid, 'ip', 'link', 'set', interface, 'up']
-                ]
+                cmd_string = f"ip addr add {address}/{cidr} dev {interface} && ip link set {interface} up"
                 if gateway:
-                    cmds.append(['podman', 'exec', self._cid, 'ip', 'route', 'add', 'default', 'via', gateway])
-                for cmd in cmds:
-                    subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                log.info(f"Applied STATIC IP {address}/{cidr} on {interface}")
+                    cmd_string += f" && ip route add default via {gateway}"
+                subprocess.run(
+                    ['podman', 'exec', self._cid, 'sh', '-c', cmd_string], 
+                    check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+                log.info(f"Applied STATIC IP {address}/{cidr} on {interface} (Fast Batch)")
 
             # ========================================== #
             # ---------Apply DHCP configuration--------- #
@@ -1221,13 +1223,23 @@ class DockerVM(BaseNode):
                         check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
                     )
                     if check_bin.returncode == 0:
-                        log.info(f"Found DHCP client '{client_cmd[0]}'. Executing...")
-                        subprocess.run(['podman', 'exec', self._cid] + client_cmd, 
-                                       check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        log.info(f"Found DHCP client '{client_cmd[0]}'. Executing in background...")
+                        cmd_final = ['podman', 'exec', '-d', self._cid] + client_cmd
+                        subprocess.run(cmd_final, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         success = True
                         break
                 if not success:
                     log.warning(f"No DHCP client found in container (tried udhcpc, dhcpcd, dhclient). Install one to use DHCP.")
+
+            # ========================================== #
+            # -----------Execute UP commands------------ #
+            # ========================================== #
+            for cmd in up_commands:
+                log.info(f"Executing UP command for {interface}: {cmd}")
+                subprocess.run(
+                    ['podman', 'exec', self._cid, 'sh', '-c', cmd],
+                    check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
         except Exception as e:
             log.warning(f"Failed to apply rootless network config: {e}")
 
@@ -1282,17 +1294,28 @@ class DockerVM(BaseNode):
             if not os.path.exists(proxy_path):
                 raise FileNotFoundError(f"Host proxy not found at {proxy_path}")
             # 1. Copy agent to container
+            agent_exists = False
             try:
-                time.sleep(0.05)
-                cmds = [
-                    ['podman', 'exec', self._cid, 'mkdir', '-p', os.path.dirname(agent_container_path)],
-                    ['podman', 'cp', agent_host_path, f'{self._cid}:{agent_container_path}'],
-                    ['podman', 'exec', self._cid, 'chmod', '+x', agent_container_path]
-                ]
-                for cmd in cmds:
-                    subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception as e:
-                log.warning(f"Error copying agent to podman container: {e}")
+                # We use test -f inside the container. If it returns 0, it exists.
+                check_cmd = ['podman', 'exec', self._cid, 'test', '-f', agent_container_path]
+                if subprocess.call(check_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0:
+                    agent_exists = True
+            except Exception:
+                pass
+            if not agent_exists:
+                log.info(f"Installing gns3-net-agent into {self._name}...")
+                try:
+                    cmds = [
+                        ['podman', 'exec', self._cid, 'mkdir', '-p', os.path.dirname(agent_container_path)],
+                        ['podman', 'cp', agent_host_path, f'{self._cid}:{agent_container_path}'],
+                        ['podman', 'exec', self._cid, 'chmod', '+x', agent_container_path]
+                    ]
+                    for cmd in cmds:
+                        subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception as e:
+                    log.warning(f"Error copying agent to podman container: {e}")
+            else:
+                log.debug(f"Agent already present in {self._name}, skipping copy.")
             # 2. Configure uBridge (GNS3 Side)
             try:
                 await self._ubridge_send(f'bridge add_nio_tap {bridge_name} {tap_gns3}')
@@ -1300,7 +1323,6 @@ class DockerVM(BaseNode):
                 log.warning(f"Error adding tap to ubridge: {e}")
             # Pre-create the proxy tap with user permissions
             try:
-                time.sleep(0.05)
                 cmds = [
                     # 1. We wipe it down in case it got dirty from a previous session.
                     ['ip', 'link', 'delete', tap_proxy],
@@ -1330,7 +1352,6 @@ class DockerVM(BaseNode):
             log.info(f"Podman Rootless: Proxy launched (PID {proxy_proc.pid}) attaching to {tap_proxy}")
             # 4. "The Plumbing": Create the bridge on the Host
             try:
-                time.sleep(0.1)
                 cmds = [
                     # Create the bridge
                     ['ip', 'link', 'add', 'name', shim_bridge, 'type', 'bridge'],
@@ -1349,7 +1370,6 @@ class DockerVM(BaseNode):
             except Exception as e:
                 log.error(f"Error building shim bridge: {e}")
             # 5 Apply settings ip interfaces
-            time.sleep(0.5)
             self._apply_rootless_ip_config(adapter_number)
         else:
             # ===================================================================================== #
