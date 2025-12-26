@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/bin/env bash
+
 set -e
 
 # --- CONFIGURATION ---
@@ -33,7 +34,7 @@ choose_wan_iface() {
     return
   fi
   mapfile -t cand_arr < <(detect_wan_candidates)
-  
+
   # Filter empty entries
   tmp=()
   for c in "${cand_arr[@]}"; do [ -n "$c" ] && tmp+=("$c"); done
@@ -95,7 +96,7 @@ function start_bridge() {
 
   # 4. Apply Rules
   echo "   -> Applying NAT, Forwarding, and TTL rules..."
-  
+
   # NAT
   if ! sudo iptables -t nat -C POSTROUTING -o "$WAN_IFACE" -j MASQUERADE 2>/dev/null; then
     sudo iptables -t nat -A POSTROUTING -o "$WAN_IFACE" -j MASQUERADE
@@ -132,8 +133,8 @@ function stop_bridge() {
   if [ -z "$WAN_IFACE" ]; then
     inferred=$(sudo iptables -S FORWARD | grep "\-i $TAP_IFACE" | awk '/-o/ {for(i=1;i<=NF;i++) if($i=="-o") print $(i+1)}' | head -n1)
     if [ -n "$inferred" ]; then
-        WAN_IFACE="$inferred"
-        echo "   -> Detected active WAN interface: $WAN_IFACE"
+      WAN_IFACE="$inferred"
+      echo "   -> Detected active WAN interface: $WAN_IFACE"
     fi
   fi
 
@@ -162,8 +163,14 @@ function stop_bridge() {
 
 # --- CONTROLLER ---
 case "$1" in
-  start)   start_bridge ;;
-  stop)    stop_bridge ;;
-  restart) stop_bridge; start_bridge ;;
-  *)       echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+start) start_bridge ;;
+stop) stop_bridge ;;
+restart)
+  stop_bridge
+  start_bridge
+  ;;
+*)
+  echo "Usage: $0 {start|stop|restart}"
+  exit 1
+  ;;
 esac
