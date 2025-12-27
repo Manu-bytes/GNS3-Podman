@@ -3,6 +3,7 @@
 set -euo pipefail
 
 # Configuration
+export GNS3_USE_PODMAN=1
 BRIDGE_SCRIPT="/usr/lib/python3.13/site-packages/gns3server/compute/docker/tap-gns3-internet.sh"
 GNS3_EXECUTABLE="gns3server" # Use "gns3" if launching the GUI
 PID_GNS3=0
@@ -20,7 +21,7 @@ cleanup_wrapper() {
 handle_sigint() {
   if [[ $PID_GNS3 -ne 0 ]]; then
     echo -e "\n#------------------------------------------------------------------#"
-    echo -e "#-- ⚡️ SIGINT signal -> sending to the GNS3 process  (PID=$PID_GNS3) --#"
+    echo -e "#-- ⚡️ SIGINT signal -> sending to the GNS3 process (PID=$PID_GNS3) --#"
     echo "#------------------------------------------------------------------#"
     kill -SIGINT "$PID_GNS3" 2>/dev/null || true
     wait "$PID_GNS3" 2>/dev/null
