@@ -11,13 +11,20 @@ GNS3_VERSION=$(python3 -c "import gns3server; print(gns3server.__version__)")
 echo "🗑️ Starting GNS3 Rootless Podman Patch Uninstallation"
 echo "ℹ️ Detected GNS3 Version: $GNS3_VERSION"
 
-# 1. Remove Symbolic Link
+# 1. System Cleanup
+echo "🧹 Cleaning up system configurations..."
+[ -L /usr/local/bin/docker ] && sudo rm /usr/local/bin/docker
+[ -f /etc/tmpfiles.d/containers.conf ] && sudo rm /etc/tmpfiles.d/containers.conf
+# Remove the simulated docker socket if it exists
+[ -L /run/docker.sock ] && sudo rm /run/docker.sock
+
+# 2. Remove Symbolic Link
 if [ -L "$BIN_LINK" ]; then
   echo "🔗 Removing symbolic link $BIN_LINK..."
   sudo rm "$BIN_LINK"
 fi
 
-# 2. Restore Original docker_vm.py
+# 3. Restore Original docker_vm.py
 echo "🔄 Restoring original docker_vm.py from GNS3 GitHub..."
 TEMP_FILE="/tmp/docker_vm_original.py"
 
@@ -39,7 +46,7 @@ else
   echo "❌ Failed to download original docker_vm.py. Please restore it manually."
 fi
 
-# 3. Clean up additional files
+# 4. Clean up additional files
 echo "🧹 Removing patch files from $TARGET_DIR..."
 FILES_TO_REMOVE=(
   "gns3-net-proxy"
