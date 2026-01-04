@@ -3,7 +3,7 @@
 set -e
 
 # --- CONFIGURATION ---
-TAP_IFACE="tap-gns3-0"
+TAP_IFACE="tap-interface"
 GATEWAY_IP="172.16.8.1/24"
 # ---------------------
 
@@ -110,7 +110,7 @@ function start_bridge() {
     sudo iptables -A FORWARD -i "$WAN_IFACE" -o "$TAP_IFACE" -m state --state RELATED,ESTABLISHED -j ACCEPT
   fi
 
-  # TTL Fix (Critical for nested virtualization/MikroTik)
+  # TTL Fix (Critical for nested virtualization)
   if ! sudo iptables -t mangle -C POSTROUTING -o "$TAP_IFACE" -j TTL --ttl-set 64 2>/dev/null; then
     sudo iptables -t mangle -A POSTROUTING -o "$TAP_IFACE" -j TTL --ttl-set 64
     echo "   -> Applied TTL Fix"
@@ -129,7 +129,7 @@ function stop_bridge() {
   echo "🔴 Stopping GNS3 Bridge..."
 
   # Infer WAN interface from Filter table (Forward chain) instead of NAT table
-  # Look for the rule: -A FORWARD -i tap-gns3-0 -o <WAN_IFACE> ...
+  # Look for the rule: -A FORWARD -i tap-interface -o <WAN_IFACE> ...
   if [ -z "$WAN_IFACE" ]; then
     inferred=$(sudo iptables -S FORWARD | grep "\-i $TAP_IFACE" | awk '/-o/ {for(i=1;i<=NF;i++) if($i=="-o") print $(i+1)}' | head -n1)
     if [ -n "$inferred" ]; then

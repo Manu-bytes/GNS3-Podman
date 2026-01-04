@@ -5,7 +5,7 @@ set -euo pipefail
 # Configuration
 export GNS3_USE_PODMAN=1
 BRIDGE_SCRIPT="/usr/lib/python3.13/site-packages/gns3server/compute/docker/tap-gns3-internet.sh"
-GNS3_EXECUTABLE="gns3server" # Use "gns3" if launching the GUI
+GNS3_EXECUTABLE="gns3server"
 PID_GNS3=0
 
 # Cleanup function
