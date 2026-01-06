@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600" viewBox="0 0 1200 600">
+  <defs>
+    <linearGradient id="a" x1="0%" x2="100%" y1="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#3498db;stop-opacity:.2"/>
+      <stop offset="100%" style="stop-color:#2980b9;stop-opacity:.1"/>
+    </linearGradient>
+    <linearGradient id="d" x1="0%" x2="0%" y1="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#bdc3c7;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#ecf0f1;stop-opacity:1"/>
+    </linearGradient>
+    <filter id="b">
+      <feGaussianBlur result="coloredBlur" stdDeviation="2.5"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="c" width="140%" height="140%" x="-20%" y="-20%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="3"/>
+      <feOffset dx="2" dy="2" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA slope=".5" type="linear"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="980" height="580" x="10" y="10" fill="#2d2d2d" stroke="#444" stroke-width="2" rx="15"/>
+  <text x="30" y="40" fill="#888" font-size="20" font-weight="bold">HOST LINUX (User Space)</text>
+  <g transform="translate(50 100)">
+    <rect width="220" height="300" fill="url(#a)" stroke="#3498db" stroke-dasharray="10,5" stroke-width="3" rx="10">
+      <animate attributeName="stroke-dashoffset" dur="20s" from="100" repeatCount="indefinite" to="0"/>
+    </rect>
+    <text x="20" y="30" fill="#3498db" font-size="16" font-weight="bold">PODMAN CONTAINER</text>
+    <text x="20" y="50" fill="#3498db" font-size="12" opacity=".7">Isolated namespaces</text>
+    <rect width="165" height="60" x="30" y="100" fill="#2c3e50" stroke="#fff" rx="5"/>
+    <text x="115" y="135" fill="#fff" font-size="14" text-anchor="middle">Agent (Static C)</text>
+    <rect width="165" height="40" x="30" y="230" fill="#27ae60" stroke="#2ecc71" stroke-width="2" rx="5"/>
+    <text x="115" y="255" fill="#fff" font-family="monospace" font-size="14" text-anchor="middle">geth0 (192.168.X)</text>
+    <path stroke="#fff" stroke-width="2" d="M93 160v70"/>
+  </g>
+  <g transform="translate(400 150)">
+    <path fill="#333" stroke="#e67e22" stroke-width="3" d="M50 0h100l50 80-50 80H50L0 80z" filter="url(#b)"/>
+    <text x="100" y="70" fill="#e67e22" font-size="16" font-weight="bold" text-anchor="middle">GNS3 PROXY</text>
+    <text x="100" y="90" fill="#e67e22" font-size="12" text-anchor="middle">(C++17 Zero-Copy)</text>
+    <text x="100" y="110" fill="#aaa" font-size="10" text-anchor="middle">STDIO Tunnel</text>
+    <circle cx="100" cy="130" r="10" fill="none" stroke="#e67e22" stroke-dasharray="5,5" stroke-width="2">
+      <animateTransform attributeName="transform" dur="4s" from="0 100 130" repeatCount="indefinite" to="360 100 130" type="rotate"/>
+    </circle>
+  </g>
+  <path fill="none" stroke="#aaa" stroke-width="4" d="M245 230h155"/>
+  <text x="330" y="220" fill="#aaa" font-size="12" text-anchor="middle">STDIN / STDOUT</text>
+  <rect width="900" height="120" x="50" y="450" fill="#222" stroke="#e74c3c" stroke-width="2" rx="10"/>
+  <text x="70" y="480" fill="#e74c3c" font-size="16" font-weight="bold">KERNEL SPACE / HOST NETWORKING (Managed by Sudo Wrapper)</text>
+  <g transform="translate(400 480)">
+    <rect width="80" height="40" y="20" fill="#c0392b" rx="5"/>
+    <text x="40" y="45" fill="#fff" font-size="12" text-anchor="middle">Tap-Proxy</text>
+  </g>
+  <g transform="translate(550 480)">
+    <rect width="120" height="60" y="10" fill="#7f8c8d" stroke="#fff" rx="5"/>
+    <text x="60" y="35" fill="#fff" font-size="14" font-weight="bold" text-anchor="middle">Shim Bridge</text>
+    <text x="60" y="55" fill="#fff" font-size="10" text-anchor="middle">(Br-shim)</text>
+  </g>
+  <g transform="translate(750 480)">
+    <rect width="80" height="40" y="20" fill="#c0392b" rx="5"/>
+    <text x="40" y="45" fill="#fff" font-size="12" text-anchor="middle">Tap-gns3</text>
+  </g>
+  <g transform="translate(790 290)">
+    <rect width="120" height="60" fill="#c0392b" stroke="#fff" stroke-width="3" rx="5"/>
+    <text x="60" y="25" fill="#fff" font-size="16" text-anchor="middle">Tap-Interface</text>
+    <text x="60" y="45" fill="#fff" font-size="12" text-anchor="middle">NAT IP-Tables</text>
+  </g>
+  <g transform="translate(850 190)">
+    <circle r="50" fill="#80b7c2" stroke="#555" stroke-width="2"/>
+    <text y="5" fill="#fff" font-size="14" text-anchor="middle">eth/wlan</text>
+  </g>
+  <g filter="url(#c)" transform="translate(1000 10)">
+    <rect width="165" height="100" fill="url(#a)" stroke="#3498db" stroke-dasharray="10,5" stroke-width="3" rx="10">
+      <animate attributeName="stroke-dashoffset" dur="20s" from="100" repeatCount="indefinite" to="0"/>
+    </rect>
+    <path fill="url(#d)" stroke="#ecf0f1" stroke-width="2" d="M22 60a20 20 0 0 1 0-40h50a20 20 0 0 1 0 40z" transform="matrix(1.5 0 0 1.5 10 -10)"/>
+    <text x="85" y="55" fill="#2c3e50" font-size="16" font-weight="bold" text-anchor="middle">INTERNET</text>
+  </g>
+  <g transform="translate(830 40)">
+    <path stroke="#3498db" stroke-dasharray="5,5" stroke-width="2" d="M15 100V50l155-30" opacity=".6"/>
+    <path fill="none" stroke="#3498db" stroke-width="3" d="M0 30q15-15 30 0" opacity=".6"/>
+    <path fill="none" stroke="#3498db" stroke-width="3" d="M5 35q10-10 20 0" opacity=".8"/>
+    <circle cx="15" cy="40" r="2" fill="#3498db"/>
+  </g>
+  <path stroke="#e67e22" stroke-dasharray="5,5" stroke-width="4" d="M500 310v140"/>
+  <path stroke="#2c3e50" stroke-width="2" d="M845 288.5V239m10 49.5V239"/>
+  <path fill="none" stroke="#fff" stroke-width="4" d="M729 360c6 0 121 20 121 89"/>
+  <path fill="none" stroke="#27ae60" stroke-dasharray="5,5" stroke-width="2" d="M143 363h277l30-53"/>
+  <path fill="none" stroke="#555" stroke-dasharray="5,5" stroke-width="2" d="m500 450-60 50" opacity=".3"/>
+  <path stroke="#fff" stroke-width="4" d="M480 523h70m120 0h80"/>
+  <path fill="none" stroke="#555" stroke-dasharray="5,5" stroke-width="2" d="m790 500 60-50" opacity=".3"/>
+  <path stroke="#fff" stroke-width="4" d="m789 320-63 10"/>
+  <g transform="translate(630 300)">
+    <rect width="100" height="100" fill="#8e44ad" stroke="#fff" stroke-width="2" rx="50"/>
+    <text x="50" y="45" fill="#fff" font-weight="bold" text-anchor="middle">GNS3</text>
+    <text x="50" y="65" fill="#fff" font-size="12" text-anchor="middle">uBridge</text>
+  </g>
+  <path fill="none" d="M245 230h155m-257 10v123h277l47-83h33"/>
+  <path fill="none" d="M500 280v170l-60 50h40v23h270v-23h40l60-50m0 0c0-70-115-90-120-90m-1 1c4-6 6-20-3-31l64-10" opacity=".3"/>
+  <path fill="none" d="M850 290v-51m0-39v-50l20-40m-20 340-60 50h40v40h-80v-17H480v17h-80v-40h40l60-50"/>
+  <circle r="4" fill="#0ff" filter="url(#b)">
+    <animateMotion begin="1s" dur="3s" path="M 245 230 L 330 230 L 400 230 L 330 230 L 245 230" repeatCount="indefinite"/>
+  </circle>
+  <circle r="4" fill="#0fc" filter="url(#b)">
+    <animateMotion begin="1s" dur="3s" path="M 143 240 L 143 363 L 420 363 L 467 280 L 500 280" repeatCount="indefinite"/>
+  </circle>
+  <circle r="4" fill="#ffac00" filter="url(#b)">
+    <animateMotion begin="1s" dur="3s" path="M 500 280 L 500 450 L 440 500 L 480 500 L 480 523 L 550 523 L 670 523 L 750 523 L 750 500 L 790 500 L 850 450 M 850 450 C 850 380, 735 360, 730 360 M 729 361 C 733 355, 735 341, 726 330 L 726 330 L 790 320" repeatCount="indefinite"/>
+  </circle>
+  <circle r="4" fill="#ff6c00" filter="url(#b)">
+    <animateMotion begin="1s" dur="3s" path="M 790 320 L 726 330 C 735 341, 733 355, 729 361 M 730 360 C 735 360, 850 380, 850 450 L 850 450 L 790 500 L 830 500 L 830 540 L 750 540 L 750 523 L 480 523 L 480 540 L 400 540 L 400 500 L 440 500 L 500 450 L 500 280" repeatCount="indefinite"/>
+  </circle>
+  <circle r="4" fill="#ff1540" filter="url(#b)">
+    <animateMotion begin="1s" dur="3s" path="M 850 290 L 850 239" repeatCount="indefinite"/>
+  </circle>
+  <circle r="4" fill="#0fc" filter="url(#b)">
+    <animateMotion begin="1s" dur="3s" path="M 850 239 L 850 290" repeatCount="indefinite"/>
+  </circle>
+  <circle r="4" fill="#ff1580" filter="url(#b)">
+    <animateMotion begin="1s" dur="3s" path="M 845 140 L 845 90 L 1000 60" repeatCount="indefinite"/>
+  </circle>
+  <circle r="4" fill="#0ff" filter="url(#b)">
+    <animateMotion begin="1s" dur="3s" path="M 1000 60 L 845 140" repeatCount="indefinite"/>
+  </circle>
+  <text x="280" y="380" fill="#0fc" font-family="monospace" font-size="12">Pipes (User Space)</text>
+</svg>
