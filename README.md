@@ -22,7 +22,8 @@ root. This extension improves security by isolating the responsibilities:
 3. **Optimized Connectivity:** Replaces generic pipe handlers with a **Zero-Copy C++
    Proxy** to tunnel Ethernet frames via `STDIN/STDOUT`.
 
-> **Architecture Note:** This solution acts as a transparent **Ethernet-over-STDIO
+> [!NOTE]
+> This solution acts as a transparent **Ethernet-over-STDIO
 > tunnel**. While user-space proxying inherently has more overhead than kernel-level
 > bridging, the C++ implementation ensures latency is minimized for real-time simulation.
 
@@ -106,8 +107,8 @@ gns3-launch
 
 ## 🖥️ Supported Interfaces
 
-> [!IMPORTANT] Current Compatibility:
->
+> [!IMPORTANT]
+> Current Compatibility:
 > - ✅ **GNS3 Desktop GUI:** Fully supported.
 > - ⚠️ **GNS3 Web UI:** Not currently supported.
 >
@@ -194,7 +195,8 @@ sudo ln -s /path/to/gns3-launch-server.sh /usr/local/bin/gns3-launch
 
 ## 🖥️ Supported Interfaces
 
-> [!IMPORTANT] This patch is currently designed to work exclusively with the
+> [!IMPORTANT]
+> This patch is currently designed to work exclusively with the
 > **[GNS3 Desktop GUI](https://github.com/GNS3/gns3-gui)**.
 >
 > - **GNS3 Web UI:** Currently, containers will not connect to the web console or
@@ -284,9 +286,9 @@ it updated with the latest GNS3 versions.
       <tr>
         <td align="center" style="border: none; padding: 20px;">
           <a href="https://tecito.app/manubytes">
-            <img src=".github/assets/coffee.svg" alt="Buy Me A Coffee" height="80">
-            <br><i>Tecito.app</i>
-          </a>
+            <img src=".github/assets/coffee.svg" alt="Buy Me A Tea" height="80">
+            <br><i>Buy me a tea</i>
+        </a>
         </td>
         <td align="center" style="border: none; padding: 20px;">
           <img src=".github/assets/EVM.svg" alt="Ethereum Virtual Machine" height="40">
